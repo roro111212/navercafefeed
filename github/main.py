@@ -1,9 +1,15 @@
 import os
-import requests
 import asyncio
-from bs4 import BeautifulSoup
+import time
+from datetime import datetime
 from telegram import Bot
-from datetime import datetime, timedelta
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 
 # GitHub Secrets에서 환경 변수 로드
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -26,34 +32,60 @@ def get_feed_posts():
         print("네이버 쿠키(NAVER_COOKIE)가 설정되지 않았습니다.")
         return []
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Cookie': NAVER_COOKIE
-    }
+    # Selenium Headless 설정
+    chrome_options = Options()
+    chrome_options.add_argument("--headless") # 화면 없이 실행
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
     
-    url = "https://section.cafe.naver.com/ca-fe/home/feed"
-    
+    posts = []
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
+        # 1. 네이버 도메인으로 이동 (쿠키 설정을 위해)
+        driver.get("https://www.naver.com")
         
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # 2. 쿠키 파싱 및 설정
+        # NAVER_COOKIE 예시: "NID_AUT=...; NID_SES=..."
+        cookie_pairs = NAVER_COOKIE.split(';')
+        for pair in cookie_pairs:
+            if '=' in pair:
+                key, value = pair.strip().split('=', 1)
+                driver.add_cookie({
+                    'name': key,
+                    'value': value,
+                    'domain': '.naver.com'
+                })
         
-        posts = []
-        # PC 버전에서 확인한 선택자 사용
-        items = soup.select("div.feed_item")
+        # 3. 피드 페이지로 이동
+        driver.get("https://section.cafe.naver.com/ca-fe/home/feed")
         
-        for item in items[:5]: # 최신 5개
+        # 4. 로딩 대기 (게시글 요소가 나타날 때까지)
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.feed_item"))
+            )
+        except:
+            print("게시글 로딩 시간 초과 또는 게시글 없음")
+            # 디버깅용 소스 출력 (너무 길면 자름)
+            # print(driver.page_source[:1000])
+        
+        # 5. 데이터 추출
+        elements = driver.find_elements(By.CSS_SELECTOR, "div.feed_item")
+        
+        for el in elements[:5]: # 최신 5개
             try:
-                title_el = item.select_one("strong.title")
-                link_el = item.select_one("div.feed_content > a")
-                date_el = item.select_one("span.date") # "방금 전", "1분 전" 등
+                title_el = el.find_element(By.CSS_SELECTOR, "strong.title")
+                link_el = el.find_element(By.CSS_SELECTOR, "div.feed_content > a")
+                date_el = el.find_element(By.CSS_SELECTOR, "span.date")
                 
-                if title_el and link_el:
-                    title = title_el.get_text(strip=True)
-                    link = link_el['href']
-                    date_text = date_el.get_text(strip=True) if date_el else ""
-                    
+                title = title_el.text
+                link = link_el.get_attribute('href')
+                date_text = date_el.text
+                
+                if title and link:
                     posts.append({
                         'title': title, 
                         'link': link,
@@ -62,30 +94,25 @@ def get_feed_posts():
             except Exception as e:
                 continue
                 
-        return posts
-        
     except Exception as e:
         print(f"피드 가져오기 실패: {e}")
-        return []
+    finally:
+        driver.quit()
+        
+    return posts
 
 async def main():
-    print("네이버 카페 피드 확인 중...")
+    print("네이버 카페 피드 확인 중... (Selenium Headless)")
     posts = get_feed_posts()
     
     if not posts:
         print("새로운 게시글이 없거나 가져오는데 실패했습니다.")
         return
 
-    # GitHub Actions는 상태 저장이 어려우므로, 
-    # "방금 전" 또는 "N분 전" 인 게시글만 필터링해서 보냄 (5분 주기 실행 가정)
-    # 또는 단순히 최신 1~2개를 보낼 수도 있지만 중복 알림 가능성이 있음.
-    # 여기서는 "방금 전", "1분 전" ~ "5분 전" 인 글만 보냄.
-    
     target_times = ["방금 전", "1분 전", "2분 전", "3분 전", "4분 전", "5분 전"]
     
     new_posts_count = 0
     for post in posts:
-        # 날짜 텍스트가 target_times에 포함되면 알림 전송
         if any(t in post['date'] for t in target_times):
             msg = f"[새 글 알림]\n{post['title']}\n{post['link']}\n({post['date']})"
             await send_telegram_message(msg)
