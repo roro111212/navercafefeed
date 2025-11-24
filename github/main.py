@@ -2,7 +2,8 @@ import os
 import asyncio
 import time
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from telegram import Bot
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -39,6 +40,47 @@ def save_sent_posts(posts):
             json.dump(posts, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"로그 파일 저장 실패: {e}")
+
+def parse_time_string(time_str):
+    """
+    '방금 전', '1분 전', '1시간 전' 등의 문자열을 파싱하여 
+    '오후 12:12' 형식의 절대 시간 문자열로 반환
+    """
+    now = datetime.now()
+    time_str = time_str.strip()
+    
+    try:
+        if '방금' in time_str:
+            dt = now
+        elif '분 전' in time_str:
+            minutes = int(re.search(r'(\d+)분', time_str).group(1))
+            dt = now - timedelta(minutes=minutes)
+        elif '시간 전' in time_str:
+            hours = int(re.search(r'(\d+)시간', time_str).group(1))
+            dt = now - timedelta(hours=hours)
+        elif '일 전' in time_str: # 혹시 모를 경우 대비
+            days = int(re.search(r'(\d+)일', time_str).group(1))
+            dt = now - timedelta(days=days)
+        else:
+            # 날짜 형식 (2024.01.01 등)이거나 알 수 없는 형식이면 현재 시간으로 대체하거나 그대로 둠
+            # 여기서는 현재 시간으로 처리
+            dt = now
+            
+        # 오전/오후 포맷팅
+        ampm = "오전" if dt.hour < 12 else "오후"
+        hour = dt.hour if dt.hour <= 12 else dt.hour - 12
+        hour = 12 if hour == 0 else hour
+        minute = dt.minute
+        
+        return f"{ampm} {hour}:{minute:02d}"
+        
+    except Exception as e:
+        print(f"시간 파싱 오류 ({time_str}): {e}")
+        # 오류 발생 시 현재 시간 반환
+        ampm = "오전" if now.hour < 12 else "오후"
+        hour = now.hour if now.hour <= 12 else now.hour - 12
+        hour = 12 if hour == 0 else hour
+        return f"{ampm} {hour}:{now.minute:02d}"
 
 async def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -141,17 +183,40 @@ def get_feed_posts():
                 link_el = el.find_element(By.CSS_SELECTOR, "div.feed_content > a")
                 date_el = el.find_element(By.CSS_SELECTOR, "span.date")
                 
+                # 좋아요/댓글 수 추출 (선택자는 네이버 카페 피드 구조에 맞춰 추정)
+                # 보통 div.feed_like > span.num, div.feed_comment > span.num 형태임
+                like_count = "0"
+                comment_count = "0"
+                
+                try:
+                    like_el = el.find_element(By.CSS_SELECTOR, "div.feed_like span.num")
+                    like_count = like_el.text.strip()
+                except:
+                    pass # 없으면 0
+                    
+                try:
+                    comment_el = el.find_element(By.CSS_SELECTOR, "div.feed_comment span.num")
+                    comment_count = comment_el.text.strip()
+                except:
+                    pass # 없으면 0
+
                 title = title_el.text.strip()
                 link = link_el.get_attribute('href').strip()
                 date_text = date_el.text.strip()
                 
-                # print(f"게시글 {i+1} 추출 성공: {title} / {date_text}")
+                # 절대 시간으로 변환
+                absolute_time = parse_time_string(date_text)
+                
+                # print(f"게시글 {i+1} 추출 성공: {title} / {date_text} -> {absolute_time}")
                 
                 if title and link:
                     posts.append({
                         'title': title, 
                         'link': link,
-                        'date': date_text
+                        'date': date_text,
+                        'absolute_time': absolute_time,
+                        'like': like_count,
+                        'comment': comment_count
                     })
             except Exception as e:
                 print(f"게시글 {i+1} 추출 실패: {e}")
@@ -181,9 +246,6 @@ async def main():
     new_posts_count = 0
     
     # 3. 중복 확인 및 전송
-    # 최신 글부터 순서대로 처리되므로, 리스트를 뒤집어서(오래된 순) 보낼 수도 있지만,
-    # 여기서는 발견된 순서(최신순)대로 처리하되, 로그에 없으면 보냄.
-    
     for post in posts:
         link = post['link']
         
@@ -191,8 +253,13 @@ async def main():
         if link in sent_posts:
             continue
             
-        # 전송
-        msg = f"[새 글 알림]\n{post['title']}\n{post['link']}\n({post['date']})"
+        # 전송 메시지 포맷 변경
+        # 오후 12:12
+        # 제목
+        # 링크
+        # 좋아요 99 댓글 99
+        msg = f"{post['absolute_time']}\n{post['title']}\n{post['link']}\n좋아요 {post['like']} 댓글 {post['comment']}"
+        
         await send_telegram_message(msg)
         
         # 보낸 목록에 추가
