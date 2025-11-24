@@ -95,7 +95,11 @@ def get_feed_posts():
         elements = driver.find_elements(By.CSS_SELECTOR, "div.feed_item")
         print(f"발견된 게시글 수: {len(elements)}")
         
-        for el in elements[:5]: # 최신 5개
+        if len(elements) > 0:
+            print("첫 번째 게시글 HTML 구조 확인:")
+            print(elements[0].get_attribute('outerHTML')[:1000])
+
+        for i, el in enumerate(elements[:5]): # 최신 5개
             try:
                 title_el = el.find_element(By.CSS_SELECTOR, "strong.title")
                 link_el = el.find_element(By.CSS_SELECTOR, "div.feed_content > a")
@@ -105,6 +109,8 @@ def get_feed_posts():
                 link = link_el.get_attribute('href')
                 date_text = date_el.text
                 
+                print(f"게시글 {i+1} 추출 성공: {title} / {date_text}")
+                
                 if title and link:
                     posts.append({
                         'title': title, 
@@ -112,6 +118,7 @@ def get_feed_posts():
                         'date': date_text
                     })
             except Exception as e:
+                print(f"게시글 {i+1} 추출 실패: {e}")
                 continue
                 
     except Exception as e:
