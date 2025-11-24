@@ -80,18 +80,35 @@ def get_feed_posts():
                         'domain': '.naver.com'
                     })
                     print(f"쿠키 추가됨: {key}")
-            print(f"현재 URL: {driver.current_url}")
-            print("페이지 소스 일부:")
-            print(driver.page_source[:2000]) # 소스 앞부분 출력
+        
+        # 3. 피드 페이지로 이동
+        print("피드 페이지로 이동 중...")
+        driver.get("https://section.cafe.naver.com/ca-fe/home/feed")
+        
+        # 4. 로딩 대기 (스켈레톤 UI가 아닌 실제 텍스트가 뜰 때까지)
+        try:
+            # 1차 대기: 컨테이너
+            WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.feed_item"))
+            )
+            # 2차 대기: 실제 제목 요소 (스켈레톤에는 strong.title에 텍스트가 없거나 클래스가 다를 수 있음)
+            WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.feed_item strong.title"))
+            )
+            time.sleep(3) # 렌더링 안정화
+        except Exception as e:
+            print(f"로딩 대기 중 타임아웃: {e}")
+
+        print(f"이동 후 URL: {driver.current_url}")
         
         # 5. 데이터 추출
         elements = driver.find_elements(By.CSS_SELECTOR, "div.feed_item")
         print(f"발견된 게시글 수: {len(elements)}")
         
-        if len(elements) > 0:
-            print("첫 번째 게시글 HTML 구조 확인:")
-            print(elements[0].get_attribute('outerHTML')[:1000])
-
+        if len(elements) == 0:
+            print("게시글을 찾지 못했습니다. 페이지 소스 일부:")
+            print(driver.page_source[:2000])
+        
         for i, el in enumerate(elements[:5]): # 최신 5개
             try:
                 title_el = el.find_element(By.CSS_SELECTOR, "strong.title")
