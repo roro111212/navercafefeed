@@ -38,9 +38,24 @@ def get_feed_posts():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    
+    # 봇 탐지 방지 옵션 추가
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    
+    # 봇 탐지 방지 스크립트 실행
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            })
+        """
+    })
     
     posts = []
     try:
@@ -62,6 +77,9 @@ def get_feed_posts():
         # 3. 피드 페이지로 이동
         driver.get("https://section.cafe.naver.com/ca-fe/home/feed")
         
+        # 디버깅: 현재 URL 확인
+        print(f"이동 후 URL: {driver.current_url}")
+        
         # 4. 로딩 대기 (게시글 요소가 나타날 때까지)
         try:
             WebDriverWait(driver, 10).until(
@@ -69,11 +87,13 @@ def get_feed_posts():
             )
         except:
             print("게시글 로딩 시간 초과 또는 게시글 없음")
-            # 디버깅용 소스 출력 (너무 길면 자름)
-            # print(driver.page_source[:1000])
+            print(f"현재 URL: {driver.current_url}")
+            print("페이지 소스 일부:")
+            print(driver.page_source[:2000]) # 소스 앞부분 출력
         
         # 5. 데이터 추출
         elements = driver.find_elements(By.CSS_SELECTOR, "div.feed_item")
+        print(f"발견된 게시글 수: {len(elements)}")
         
         for el in elements[:5]: # 최신 5개
             try:
@@ -102,7 +122,7 @@ def get_feed_posts():
     return posts
 
 async def main():
-    print("네이버 카페 피드 확인 중... (Selenium Headless)")
+    print("네이버 카페 피드 확인 중... (Selenium Headless + Anti-Detect)")
     posts = get_feed_posts()
     
     if not posts:
