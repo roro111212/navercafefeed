@@ -3,7 +3,7 @@ import asyncio
 import time
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from telegram import Bot
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -46,7 +46,10 @@ def parse_time_string(time_str):
     '방금 전', '1분 전', '1시간 전' 등의 문자열을 파싱하여 
     '오후 12:12' 형식의 절대 시간 문자열로 반환
     """
-    now = datetime.now()
+    # KST (UTC+9) 설정
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST)
+    
     time_str = time_str.strip()
     
     try:
