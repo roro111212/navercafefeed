@@ -3,6 +3,7 @@ import asyncio
 import time
 import json
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from telegram import Bot
 from selenium import webdriver
@@ -12,13 +13,16 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from dotenv import load_dotenv
 
-# GitHub Secrets에서 환경 변수 로드
+load_dotenv()  # .env 파일 로드
+
+# 환경 변수 로드
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '').strip()
-NAVER_COOKIE = os.environ.get('NAVER_COOKIE', '').strip() # NID_AUT=...; NID_SES=...
+NAVER_COOKIE = os.environ.get('NAVER_COOKIE', '').strip()
 
-# 보낸 게시글 목록 파일 경로
+# 로컬 파일에 저장 (GitHub Actions에서는 커밋 필요, 여기서는 로컬 파일 시스템 사용)
 SENT_POSTS_FILE = 'sent_posts.json'
 
 def load_sent_posts():
@@ -61,12 +65,11 @@ def parse_time_string(time_str):
         elif '시간 전' in time_str:
             hours = int(re.search(r'(\d+)시간', time_str).group(1))
             dt = now - timedelta(hours=hours)
-        elif '일 전' in time_str: # 혹시 모를 경우 대비
+        elif '일 전' in time_str:
             days = int(re.search(r'(\d+)일', time_str).group(1))
             dt = now - timedelta(days=days)
         else:
-            # 날짜 형식 (2024.01.01 등)이거나 알 수 없는 형식이면 현재 시간으로 대체하거나 그대로 둠
-            # 여기서는 현재 시간으로 처리
+            # 날짜 형식 (2024.01.01 등)이거나 알 수 없는 형식이면 현재 시간으로 대체
             dt = now
             
         # 오전/오후 포맷팅
@@ -100,7 +103,7 @@ async def send_telegram_message(message):
 def get_feed_posts():
     if not NAVER_COOKIE:
         print("네이버 쿠키(NAVER_COOKIE)가 설정되지 않았습니다.")
-        return []
+        return [], False
 
     # Selenium Headless 설정
     chrome_options = Options()
@@ -115,6 +118,9 @@ def get_feed_posts():
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
+    
+    # 로그 레벨 조정
+    chrome_options.add_argument("--log-level=3")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
     
@@ -133,7 +139,6 @@ def get_feed_posts():
         driver.get("https://www.naver.com")
         
         # 2. 쿠키 파싱 및 설정
-        # NAVER_COOKIE 예시: "NID_AUT=...; NID_SES=..."
         if not NAVER_COOKIE:
             print("오류: NAVER_COOKIE 환경 변수가 비어있습니다.")
         
@@ -155,13 +160,11 @@ def get_feed_posts():
         print("피드 페이지로 이동 중...")
         driver.get("https://section.cafe.naver.com/ca-fe/home/feed")
         
-        # 4. 로딩 대기 (스켈레톤 UI가 아닌 실제 텍스트가 뜰 때까지)
+        # 4. 로딩 대기
         try:
-            # 1차 대기: 컨테이너
             WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div.feed_item"))
             )
-            # 2차 대기: 실제 제목 요소 (스켈레톤에는 strong.title에 텍스트가 없거나 클래스가 다를 수 있음)
             WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div.feed_item strong.title"))
             )
@@ -170,6 +173,12 @@ def get_feed_posts():
             print(f"로딩 대기 중 타임아웃: {e}")
 
         print(f"이동 후 URL: {driver.current_url}")
+        
+        # 쿠키 만료 확인 (로그인 페이지로 리다이렉트되었는지 체크)
+        cookie_expired = False
+        if "nid.naver.com" in driver.current_url or "nidlogin" in driver.current_url:
+            print("⚠️ 쿠키가 만료되었습니다! 로그인 페이지로 리다이렉트됨.")
+            cookie_expired = True
         
         # 5. 데이터 추출
         elements = driver.find_elements(By.CSS_SELECTOR, "div.feed_item")
@@ -186,31 +195,27 @@ def get_feed_posts():
                 link_el = el.find_element(By.CSS_SELECTOR, "div.feed_content > a")
                 date_el = el.find_element(By.CSS_SELECTOR, "span.date")
                 
-                # 좋아요/댓글 수 추출 (사용자 피드백 기반 선택자 수정)
+                # 좋아요/댓글 수 추출
                 like_count = "0"
                 comment_count = "0"
                 
                 try:
-                    # <span class="count like">좋아요 14</span>
                     like_el = el.find_element(By.CSS_SELECTOR, "span.count.like")
                     like_text = like_el.text.strip()
-                    # 숫자만 추출
                     match = re.search(r'\d+', like_text)
                     if match:
                         like_count = match.group()
                 except:
-                    pass # 없으면 0
+                    pass 
                     
                 try:
-                    # <a class="comment">... 7 </a>
                     comment_el = el.find_element(By.CSS_SELECTOR, "a.comment")
                     comment_text = comment_el.text.strip()
-                    # 숫자만 추출
                     match = re.search(r'\d+', comment_text)
                     if match:
                         comment_count = match.group()
                 except:
-                    pass # 없으면 0
+                    pass
 
                 title = title_el.text.strip()
                 link = link_el.get_attribute('href').strip()
@@ -218,8 +223,6 @@ def get_feed_posts():
                 
                 # 절대 시간으로 변환
                 absolute_time = parse_time_string(date_text)
-                
-                # print(f"게시글 {i+1} 추출 성공: {title} / {date_text} -> {absolute_time}")
                 
                 if title and link:
                     posts.append({
@@ -236,10 +239,11 @@ def get_feed_posts():
                 
     except Exception as e:
         print(f"피드 가져오기 실패: {e}")
+        cookie_expired = False
     finally:
         driver.quit()
         
-    return posts
+    return posts, cookie_expired
 
 async def main():
     print("네이버 카페 피드 확인 중... (Selenium Headless + Anti-Detect)")
@@ -249,7 +253,33 @@ async def main():
     print(f"기존에 보낸 게시글 수: {len(sent_posts)}")
     
     # 2. 새 게시글 가져오기
-    posts = get_feed_posts()
+    posts, cookie_expired = get_feed_posts()
+    
+    # 3. 쿠키 만료 알림 (하루에 한 번만 보내기 위한 체크)
+    if cookie_expired:
+        cookie_alert_file = 'cookie_alert_sent.txt'
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # 오늘 이미 알림을 보냈는지 확인
+        send_alert = True
+        if os.path.exists(cookie_alert_file):
+            with open(cookie_alert_file, 'r') as f:
+                last_alert_date = f.read().strip()
+                if last_alert_date == today:
+                    send_alert = False
+        
+        if send_alert:
+            alert_msg = "⚠️ [긴급] 네이버 쿠키가 만료되었습니다!\n\n" \
+                       "봇이 더 이상 게시글을 가져올 수 없습니다.\n" \
+                       "PC에서 네이버 카페에 접속하여 새 쿠키를 복사한 뒤,\n" \
+                       "서버의 .env 파일을 업데이트해 주세요."
+            await send_telegram_message(alert_msg)
+            
+            # 오늘 날짜 기록 (다음 알림은 내일부터)
+            with open(cookie_alert_file, 'w') as f:
+                f.write(today)
+            print("쿠키 만료 알림을 텔레그램으로 전송했습니다.")
+        return
     
     if not posts:
         print("새로운 게시글이 없거나 가져오는데 실패했습니다.")
@@ -258,35 +288,26 @@ async def main():
     new_posts_count = 0
     
     # 3. 중복 확인 및 전송
-    for post in posts:
+    # 최신순(위->아래)으로 가져왔으므로, 알림은 과거순(아래->위)으로 보내기 위해 역순 처리
+    for post in reversed(posts):
         link = post['link']
         
         # 이미 보낸 링크라면 건너뜀
         if link in sent_posts:
             continue
             
-        # 전송 메시지 포맷 변경
-        # 오후 12:12
-        # 제목
-        # 링크
-        # 좋아요 99 댓글 99
         msg = f"{post['absolute_time']}\n{post['title']}\n{post['link']}\n좋아요 {post['like']} 댓글 {post['comment']}"
-        
         await send_telegram_message(msg)
         
-        # 보낸 목록에 추가
         sent_posts.append(link)
         new_posts_count += 1
-        
-        # 텔레그램 전송 딜레이 (안전장치)
-        time.sleep(1)
-            
-    if new_posts_count == 0:
-        print("새로운 게시글이 없습니다.")
-    else:
-        print(f"{new_posts_count}개의 새 글 알림을 전송했습니다.")
-        # 4. 업데이트된 목록 저장
+        time.sleep(1) # 메시지 전송 간격
+    
+    if new_posts_count > 0:
+        print(f"--> {new_posts_count}개의 새 글 알림 전송 완료.")
         save_sent_posts(sent_posts)
+    else:
+        print("--> 새로운 게시글이 없습니다.")
 
 if __name__ == "__main__":
     asyncio.run(main())
