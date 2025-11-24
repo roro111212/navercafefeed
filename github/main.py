@@ -12,15 +12,16 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # GitHub Secrets에서 환경 변수 로드
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
-NAVER_COOKIE = os.environ.get('NAVER_COOKIE') # NID_AUT=...; NID_SES=...
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '').strip()
+NAVER_COOKIE = os.environ.get('NAVER_COOKIE', '').strip() # NID_AUT=...; NID_SES=...
 
 async def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Telegram 설정이 누락되었습니다.")
         return
     try:
+        # Bot 초기화 시 토큰 다시 한 번 확인
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         print(f"텔레그램 전송 성공: {message[:20]}...")
@@ -115,9 +116,9 @@ def get_feed_posts():
                 link_el = el.find_element(By.CSS_SELECTOR, "div.feed_content > a")
                 date_el = el.find_element(By.CSS_SELECTOR, "span.date")
                 
-                title = title_el.text
-                link = link_el.get_attribute('href')
-                date_text = date_el.text
+                title = title_el.text.strip()
+                link = link_el.get_attribute('href').strip()
+                date_text = date_el.text.strip()
                 
                 print(f"게시글 {i+1} 추출 성공: {title} / {date_text}")
                 
