@@ -64,15 +64,24 @@ def get_feed_posts():
         
         # 2. 쿠키 파싱 및 설정
         # NAVER_COOKIE 예시: "NID_AUT=...; NID_SES=..."
+        if not NAVER_COOKIE:
+            print("오류: NAVER_COOKIE 환경 변수가 비어있습니다.")
+        
         cookie_pairs = NAVER_COOKIE.split(';')
+        print(f"설정할 쿠키 개수: {len(cookie_pairs)}")
+        
         for pair in cookie_pairs:
             if '=' in pair:
                 key, value = pair.strip().split('=', 1)
-                driver.add_cookie({
-                    'name': key,
-                    'value': value,
-                    'domain': '.naver.com'
-                })
+                if key and value:
+                    driver.add_cookie({
+                        'name': key,
+                        'value': value,
+                        'domain': '.naver.com'
+                    })
+                    print(f"쿠키 추가됨: {key}")
+                else:
+                    print(f"쿠키 형식이 올바르지 않음: {pair}")
         
         # 3. 피드 페이지로 이동
         driver.get("https://section.cafe.naver.com/ca-fe/home/feed")
