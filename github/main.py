@@ -1,6 +1,7 @@
 import os
 import asyncio
 import time
+import json
 from datetime import datetime
 from telegram import Bot
 from selenium import webdriver
@@ -15,6 +16,29 @@ from webdriver_manager.chrome import ChromeDriverManager
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '').strip()
 NAVER_COOKIE = os.environ.get('NAVER_COOKIE', '').strip() # NID_AUT=...; NID_SES=...
+
+# 보낸 게시글 목록 파일 경로
+SENT_POSTS_FILE = 'sent_posts.json'
+
+def load_sent_posts():
+    if os.path.exists(SENT_POSTS_FILE):
+        try:
+            with open(SENT_POSTS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"기존 로그 파일 로드 실패: {e}")
+            return []
+    return []
+
+def save_sent_posts(posts):
+    try:
+        # 너무 많이 쌓이지 않도록 최신 100개만 유지
+        if len(posts) > 100:
+            posts = posts[-100:]
+        with open(SENT_POSTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(posts, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"로그 파일 저장 실패: {e}")
 
 async def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -110,7 +134,8 @@ def get_feed_posts():
             print("게시글을 찾지 못했습니다. 페이지 소스 일부:")
             print(driver.page_source[:2000])
         
-        for i, el in enumerate(elements[:5]): # 최신 5개
+        # 최신 20개 검사
+        for i, el in enumerate(elements[:20]): 
             try:
                 title_el = el.find_element(By.CSS_SELECTOR, "strong.title")
                 link_el = el.find_element(By.CSS_SELECTOR, "div.feed_content > a")
@@ -120,7 +145,7 @@ def get_feed_posts():
                 link = link_el.get_attribute('href').strip()
                 date_text = date_el.text.strip()
                 
-                print(f"게시글 {i+1} 추출 성공: {title} / {date_text}")
+                # print(f"게시글 {i+1} 추출 성공: {title} / {date_text}")
                 
                 if title and link:
                     posts.append({
@@ -141,26 +166,48 @@ def get_feed_posts():
 
 async def main():
     print("네이버 카페 피드 확인 중... (Selenium Headless + Anti-Detect)")
+    
+    # 1. 기존에 보낸 게시글 목록 로드
+    sent_posts = load_sent_posts()
+    print(f"기존에 보낸 게시글 수: {len(sent_posts)}")
+    
+    # 2. 새 게시글 가져오기
     posts = get_feed_posts()
     
     if not posts:
         print("새로운 게시글이 없거나 가져오는데 실패했습니다.")
         return
 
-    target_times = ["방금 전", "1분 전", "2분 전", "3분 전", "4분 전", "5분 전"]
-    
     new_posts_count = 0
+    
+    # 3. 중복 확인 및 전송
+    # 최신 글부터 순서대로 처리되므로, 리스트를 뒤집어서(오래된 순) 보낼 수도 있지만,
+    # 여기서는 발견된 순서(최신순)대로 처리하되, 로그에 없으면 보냄.
+    
     for post in posts:
-        if any(t in post['date'] for t in target_times):
-            msg = f"[새 글 알림]\n{post['title']}\n{post['link']}\n({post['date']})"
-            await send_telegram_message(msg)
-            new_posts_count += 1
+        link = post['link']
+        
+        # 이미 보낸 링크라면 건너뜀
+        if link in sent_posts:
+            continue
+            
+        # 전송
+        msg = f"[새 글 알림]\n{post['title']}\n{post['link']}\n({post['date']})"
+        await send_telegram_message(msg)
+        
+        # 보낸 목록에 추가
+        sent_posts.append(link)
+        new_posts_count += 1
+        
+        # 텔레그램 전송 딜레이 (안전장치)
+        time.sleep(1)
             
     if new_posts_count == 0:
-        print("최근 5분 내 작성된 새 글이 없습니다.")
+        print("새로운 게시글이 없습니다.")
     else:
         print(f"{new_posts_count}개의 새 글 알림을 전송했습니다.")
+        # 4. 업데이트된 목록 저장
+        save_sent_posts(sent_posts)
 
 if __name__ == "__main__":
     asyncio.run(main())
-    # Force update
