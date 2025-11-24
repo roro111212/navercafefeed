@@ -80,22 +80,6 @@ def get_feed_posts():
                         'domain': '.naver.com'
                     })
                     print(f"쿠키 추가됨: {key}")
-                else:
-                    print(f"쿠키 형식이 올바르지 않음: {pair}")
-        
-        # 3. 피드 페이지로 이동
-        driver.get("https://section.cafe.naver.com/ca-fe/home/feed")
-        
-        # 디버깅: 현재 URL 확인
-        print(f"이동 후 URL: {driver.current_url}")
-        
-        # 4. 로딩 대기 (게시글 요소가 나타날 때까지)
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div.feed_item"))
-            )
-        except:
-            print("게시글 로딩 시간 초과 또는 게시글 없음")
             print(f"현재 URL: {driver.current_url}")
             print("페이지 소스 일부:")
             print(driver.page_source[:2000]) # 소스 앞부분 출력
