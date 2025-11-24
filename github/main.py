@@ -186,20 +186,29 @@ def get_feed_posts():
                 link_el = el.find_element(By.CSS_SELECTOR, "div.feed_content > a")
                 date_el = el.find_element(By.CSS_SELECTOR, "span.date")
                 
-                # 좋아요/댓글 수 추출 (선택자는 네이버 카페 피드 구조에 맞춰 추정)
-                # 보통 div.feed_like > span.num, div.feed_comment > span.num 형태임
+                # 좋아요/댓글 수 추출 (사용자 피드백 기반 선택자 수정)
                 like_count = "0"
                 comment_count = "0"
                 
                 try:
-                    like_el = el.find_element(By.CSS_SELECTOR, "div.feed_like span.num")
-                    like_count = like_el.text.strip()
+                    # <span class="count like">좋아요 14</span>
+                    like_el = el.find_element(By.CSS_SELECTOR, "span.count.like")
+                    like_text = like_el.text.strip()
+                    # 숫자만 추출
+                    match = re.search(r'\d+', like_text)
+                    if match:
+                        like_count = match.group()
                 except:
                     pass # 없으면 0
                     
                 try:
-                    comment_el = el.find_element(By.CSS_SELECTOR, "div.feed_comment span.num")
-                    comment_count = comment_el.text.strip()
+                    # <a class="comment">... 7 </a>
+                    comment_el = el.find_element(By.CSS_SELECTOR, "a.comment")
+                    comment_text = comment_el.text.strip()
+                    # 숫자만 추출
+                    match = re.search(r'\d+', comment_text)
+                    if match:
+                        comment_count = match.group()
                 except:
                     pass # 없으면 0
 
