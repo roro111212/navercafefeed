@@ -12,18 +12,19 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-# from webdriver_manager.chrome import ChromeDriverManager # 제거: 시스템 드라이버 사용
+from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv
 
-load_dotenv()  # .env 파일 로드
+# .env 파일 로드 (같은 디렉토리 또는 상위 디렉토리 확인)
+load_dotenv()
 
 # 환경 변수 로드
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '').strip()
 NAVER_COOKIE = os.environ.get('NAVER_COOKIE', '').strip()
 
-# 로컬 파일에 저장 (GitHub Actions에서는 커밋 필요, 여기서는 로컬 파일 시스템 사용)
-SENT_POSTS_FILE = 'sent_posts.json'
+# PC 버전은 별도의 로그 파일 사용
+SENT_POSTS_FILE = 'local_log.json'
 
 def load_sent_posts():
     if os.path.exists(SENT_POSTS_FILE):
@@ -65,11 +66,12 @@ def parse_time_string(time_str):
         elif '시간 전' in time_str:
             hours = int(re.search(r'(\d+)시간', time_str).group(1))
             dt = now - timedelta(hours=hours)
-        elif '일 전' in time_str:
+        elif '일 전' in time_str: # 혹시 모를 경우 대비
             days = int(re.search(r'(\d+)일', time_str).group(1))
             dt = now - timedelta(days=days)
         else:
-            # 날짜 형식 (2024.01.01 등)이거나 알 수 없는 형식이면 현재 시간으로 대체
+            # 날짜 형식 (2024.01.01 등)이거나 알 수 없는 형식이면 현재 시간으로 대체하거나 그대로 둠
+            # 여기서는 현재 시간으로 처리
             dt = now
             
         # 오전/오후 포맷팅
@@ -103,7 +105,7 @@ async def send_telegram_message(message):
 def get_feed_posts():
     if not NAVER_COOKIE:
         print("네이버 쿠키(NAVER_COOKIE)가 설정되지 않았습니다.")
-        return [], False
+        return []
 
     # Selenium Headless 설정
     chrome_options = Options()
@@ -119,19 +121,10 @@ def get_feed_posts():
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
-    # 로그 레벨 조정
+    # 로그 레벨 조정 (불필요한 로그 숨김)
     chrome_options.add_argument("--log-level=3")
 
-    # Chromium 호환 옵션
-    chrome_options.binary_location = "/usr/bin/chromium-browser" # 오라클 우분투 기본 경로
-    
-    # 시스템에 설치된 ChromeDriver 사용
-    service = Service("/usr/bin/chromedriver") 
-    try:
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-    except Exception as e:
-        print(f"기본 경로 드라이버 실패, 경로 없이 재시도: {e}")
-        driver = webdriver.Chrome(options=chrome_options)
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
     
     # 봇 탐지 방지 스크립트 실행
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
@@ -152,7 +145,6 @@ def get_feed_posts():
             print("오류: NAVER_COOKIE 환경 변수가 비어있습니다.")
         
         cookie_pairs = NAVER_COOKIE.split(';')
-        print(f"설정할 쿠키 개수: {len(cookie_pairs)}")
         
         for pair in cookie_pairs:
             if '=' in pair:
@@ -163,10 +155,8 @@ def get_feed_posts():
                         'value': value,
                         'domain': '.naver.com'
                     })
-                    print(f"쿠키 추가됨: {key}")
         
         # 3. 피드 페이지로 이동
-        print("피드 페이지로 이동 중...")
         driver.get("https://section.cafe.naver.com/ca-fe/home/feed")
         
         # 4. 로딩 대기
@@ -181,21 +171,9 @@ def get_feed_posts():
         except Exception as e:
             print(f"로딩 대기 중 타임아웃: {e}")
 
-        print(f"이동 후 URL: {driver.current_url}")
-        
-        # 쿠키 만료 확인 (로그인 페이지로 리다이렉트되었는지 체크)
-        cookie_expired = False
-        if "nid.naver.com" in driver.current_url or "nidlogin" in driver.current_url:
-            print("⚠️ 쿠키가 만료되었습니다! 로그인 페이지로 리다이렉트됨.")
-            cookie_expired = True
-        
         # 5. 데이터 추출
         elements = driver.find_elements(By.CSS_SELECTOR, "div.feed_item")
         print(f"발견된 게시글 수: {len(elements)}")
-        
-        if len(elements) == 0:
-            print("게시글을 찾지 못했습니다. 페이지 소스 일부:")
-            print(driver.page_source[:2000])
         
         # 최신 20개 검사
         for i, el in enumerate(elements[:20]): 
@@ -248,84 +226,59 @@ def get_feed_posts():
                 
     except Exception as e:
         print(f"피드 가져오기 실패: {e}")
-        cookie_expired = False
     finally:
         driver.quit()
         
-    return posts, cookie_expired
+    return posts
 
-async def main():
-    print("네이버 카페 피드 확인 중... (Selenium Headless + Anti-Detect)")
+async def main_loop():
+    print("="*50)
+    print("PC 버전 네이버 카페 알림 봇 시작")
+    print("1분 간격으로 피드를 확인합니다.")
+    print("종료하려면 Ctrl+C를 누르세요.")
+    print("="*50)
     
-    # 1. 기존에 보낸 게시글 목록 로드
-    sent_posts = load_sent_posts()
-    print(f"기존에 보낸 게시글 수: {len(sent_posts)}")
-    
-    # 2. 새 게시글 가져오기
-    posts, cookie_expired = get_feed_posts()
-    
-    # 3. 쿠키 만료 알림 (하루에 한 번만 보내기 위한 체크)
-    if cookie_expired:
-        cookie_alert_file = 'cookie_alert_sent.txt'
-        today = datetime.now().strftime('%Y-%m-%d')
-        
-        # 오늘 이미 알림을 보냈는지 확인
-        send_alert = True
-        if os.path.exists(cookie_alert_file):
-            with open(cookie_alert_file, 'r') as f:
-                last_alert_date = f.read().strip()
-                if last_alert_date == today:
-                    send_alert = False
-        
-        if send_alert:
-            alert_msg = "⚠️ [긴급] 네이버 쿠키가 만료되었습니다!\n\n" \
-                       "봇이 더 이상 게시글을 가져올 수 없습니다.\n" \
-                       "PC에서 네이버 카페에 접속하여 새 쿠키를 복사한 뒤,\n" \
-                       "서버의 .env 파일을 업데이트해 주세요."
-            await send_telegram_message(alert_msg)
+    while True:
+        try:
+            print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 피드 확인 중...")
             
-            # 오늘 날짜 기록 (다음 알림은 내일부터)
-            with open(cookie_alert_file, 'w') as f:
-                f.write(today)
-            print("쿠키 만료 알림을 텔레그램으로 전송했습니다.")
-        return
-    
-    if not posts:
-        print("새로운 게시글이 없거나 가져오는데 실패했습니다.")
-        return
-
-    new_posts_count = 0
-    
-    # 3. 중복 확인 및 전송
-    # 최신순(위->아래)으로 가져왔으므로, 알림은 과거순(아래->위)으로 보내기 위해 역순 처리
-    for post in reversed(posts):
-        link = post['link']
-        
-        # 이미 보낸 링크라면 건너뜀
-        if link in sent_posts:
-            continue
+            # 1. 기존 로그 로드
+            sent_posts = load_sent_posts()
             
-        msg = f"{post['absolute_time']}\n{post['title']}\n{post['link']}\n좋아요 {post['like']} 댓글 {post['comment']}"
-        await send_telegram_message(msg)
-        
-        sent_posts.append(link)
-        new_posts_count += 1
-        time.sleep(1) # 메시지 전송 간격
-    
-    if new_posts_count > 0:
-        print(f"--> {new_posts_count}개의 새 글 알림 전송 완료.")
-        save_sent_posts(sent_posts)
-        save_sent_posts(sent_posts)
-    else:
-        print("--> 새로운 게시글이 없습니다.")
-        
-    # 4. 생존 신고 (Watchdog용)
-    try:
-        with open('last_run.txt', 'w') as f:
-            f.write(str(time.time()))
-        print("생존 신고 완료 (last_run.txt 업데이트)")
-    except Exception as e:
-        print(f"생존 신고 실패: {e}")
+            # 2. 새 글 가져오기
+            posts = get_feed_posts()
+            
+            if posts:
+                new_posts_count = 0
+                for post in posts:
+                    link = post['link']
+                    if link in sent_posts:
+                        continue
+                        
+                    msg = f"{post['absolute_time']}\n{post['title']}\n{post['link']}\n좋아요 {post['like']} 댓글 {post['comment']}"
+                    await send_telegram_message(msg)
+                    
+                    sent_posts.append(link)
+                    new_posts_count += 1
+                    time.sleep(1)
+                
+                if new_posts_count > 0:
+                    print(f"--> {new_posts_count}개의 새 글 알림 전송 완료.")
+                    save_sent_posts(sent_posts)
+                else:
+                    print("--> 새로운 게시글이 없습니다.")
+            else:
+                print("--> 게시글을 가져오지 못했습니다.")
+                
+        except Exception as e:
+            print(f"오류 발생: {e}")
+            
+        # 1분 대기
+        print("1분 뒤 다시 확인합니다...")
+        await asyncio.sleep(60)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main_loop())
+    except KeyboardInterrupt:
+        print("\n프로그램을 종료합니다.")
