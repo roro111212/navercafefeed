@@ -123,7 +123,8 @@ def get_feed_posts():
     chrome_options.add_argument("--log-level=3")
 
     # Chromium 호환 옵션
-    chrome_options.binary_location = "/usr/bin/chromium-browser" # 오라클 우분투 기본 경로
+    chrome_options.binary_location = "/usr/bin/chromium-browser"
+    chrome_options.page_load_strategy = 'eager' # 이미지 로딩 안 기다림 (속도 향상)
     
     # 시스템에 설치된 ChromeDriver 사용
     service = Service("/usr/bin/chromedriver") 
