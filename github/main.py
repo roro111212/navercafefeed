@@ -107,7 +107,7 @@ def get_feed_posts():
 
     # Selenium Headless 설정
     chrome_options = Options()
-    chrome_options.add_argument("--headless") # 화면 없이 실행
+    chrome_options.add_argument("--headless=new") # 화면 없이 실행 (신버전 안정성 향상)
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
