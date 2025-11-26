@@ -173,10 +173,10 @@ def get_feed_posts():
         
         # 4. 로딩 대기
         try:
-            WebDriverWait(driver, 20).until(
+            WebDriverWait(driver, 40).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div.feed_item"))
             )
-            WebDriverWait(driver, 20).until(
+            WebDriverWait(driver, 40).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div.feed_item strong.title"))
             )
             time.sleep(3) # 렌더링 안정화
@@ -264,6 +264,13 @@ async def main():
     except IOError:
         print("이미 봇이 실행 중입니다. (중복 실행 방지)")
         return
+
+    # 실행 시작 시간 출력 (한국 시간)
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST)
+    print(f"\n{'='*50}")
+    print(f"🤖 실행 시작: {now.strftime('%Y-%m-%d %H:%M:%S')} (KST)")
+    print(f"{'='*50}")
 
     print("네이버 카페 피드 확인 중... (Selenium Headless + Anti-Detect)")
     
