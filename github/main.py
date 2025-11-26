@@ -4,6 +4,7 @@ import time
 import json
 import re
 import sys
+import fcntl # 파일 잠금용
 from datetime import datetime, timedelta, timezone
 from telegram import Bot
 from selenium import webdriver
@@ -256,6 +257,14 @@ def get_feed_posts():
     return posts, cookie_expired
 
 async def main():
+    # 0. 중복 실행 방지 (Lock)
+    lock_file = open("bot.lock", "w")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        print("이미 봇이 실행 중입니다. (중복 실행 방지)")
+        return
+
     print("네이버 카페 피드 확인 중... (Selenium Headless + Anti-Detect)")
     
     # 1. 기존에 보낸 게시글 목록 로드
